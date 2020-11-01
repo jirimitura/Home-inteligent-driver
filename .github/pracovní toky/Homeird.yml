@@ -1,33 +1,294 @@
-# This is a basic workflow to help you get started with Actions
+/* uprava hysterese 29092020 bojler , topeni , TUV , upravy kodu led . dopl. popisku  */
+/* 20.11.19  prumery teplot , zmena nastaveni teploty vypinani topeni*/
+// 23.11.19 nejde logika pto cerpadlo topeni 
+// 31.10.2020 uprava logiky pro ohřev z AKU , přidáno led kontrolky brány ( koncáky ) 
+#define BLYNK_PRINT Serial
+#include <SPI.h>
+#include <Ethernet.h>
+#include <BlynkSimpleEthernet.h>
+#include "DHT.h"
+#include <OneWire.h>
+#include "DS18B20.h"
+#include <DallasTemperature.h>
+WidgetLED led1(33);  // A8  // 62 // V33 // Led 1 obeh cerp. kotel
+WidgetLED led2(35);  // A9  // 63 // V35 // Led 2 oběh ohřev TUV
+WidgetLED led3(41);  // A11 // 65 // V41 // Led 3  obeh cerp. topeni
+WidgetLED led4(66);  // A12 // 66 // V40 // Led 4 Pojezdov.Brana
+WidgetLED led5(42);  // A13 // 67 // V42 // Led 5 svetlo venku
+WidgetLED led6(68);  // A14 // 68 // V43 // Led 6 nic
+WidgetLED led7(69);  // A15 // 69 // V44 // Led 7  obeh cerp. do bazenu ?
+WidgetLED led8(64);  // A16 // 64 // V64 // Led 8 TUV el ohřev
+WidgetLED led9(70);  //     // V70 Led 9 koncák brána Otev ? 
+WidgetLED led10(71); //     // V71 Led 10 koncák brána  Zavř ?
 
-name: CI
+#define DS18_1  33 // kotel
+#define DS18_2  35 // bojler
+#define DS18_3  37 // aku vrch
+#define DS18_4  39 // aku stred
+#define DS18_5  47 // akudole   //41
+#define DS18_6  41 // topeni    //43
+#define DS18_7  43 // sever     //45
+#define DS18_8  45 // jih       //47
+DS18B20 kotel(DS18_1);
+DS18B20 bojler(DS18_2);
+DS18B20 akuvrch(DS18_3);
+DS18B20 akustred(DS18_4);
+DS18B20 akudole(DS18_5);
+DS18B20 topeni(DS18_6);
+DS18B20 sever(DS18_7);
+DS18B20 jih(DS18_8);
 
-# Controls when the action will run. Triggers the workflow on push or pull request
-# events but only for the main branch
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+#define CerpKotel 62    //  A8 // obeh cerp. kotel
+#define CerpBojler 63   //  A9 // obeh cerp. bojler
+#define ElOhrev 64      // A10 // blokovani el.ohrevu
+#define CerpTopeni 65   // A11 // obeh cerp. topeni
+#define Brana 66        // A12 // Brána 
+#define BrZav 20        // v70 // Brána koncak zavř
+#define BrOte 21        // v71 // Brána  koncak otevř
+#define RE_6  67        // A13 42 světlo venku
+#define RE_7 68         // A14
+#define RE_8 69         // A15 //  obeh cerp. do bazenu ?
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
-jobs:
-  # This workflow contains a single job called "build"
-  build:
-    # The type of runner that the job will run on
-    runs-on: ubuntu-latest
+#define Kotelna  32  // DHT
+#define Garaz    34  // DHT
+#define Sklad    36  // DHT
+#define Kuchyn   38  // DHT
+#define Obyvak   40  // DHT
+#define Loznice  42  // DHT
+//#define DHT_7_r3  44 // DHT
+//#define DHT_8_r4  46 // DHT
+DHT dht_1(Kotelna);
+DHT dht_2(Garaz);
+DHT dht_3(Sklad);
+DHT dht_4(Kuchyn);
+DHT dht_5(Obyvak);
+DHT dht_6(Loznice);
+//DHT dht_7(DHT_7_r3);
+//DHT dht_8(DHT_8_r4);
+//////////////////////////////////////////////////////
+char auth[] = "uvt9sdMix9Vw2f9C9eUToDtStcZyyLdF";
+#define W5100_CS  10
+#define SDCARD_CS 4
+int buttonState; // expecting 0 or 1
+float NastavTopeni; // expecting 0.00-80.00
+BlynkTimer timer;/* pošle na virtuálpin(5).V aplikaci by četnost čtení Widgetu měla být nastavena na PUSH. To znamená že 
+definujete, jak často mají být data odesílána do aplikace Blynk.*/ 
+void odesli() // veskere senzory
+{ // DS18B20
+float kotelC = kotel.readTempC();  Blynk.virtualWrite(V0, kotelC);//Serial.print("kotel  ");Serial.print(kotelC);Serial.println();
+float bojlerC = bojler.readTempC(); Blynk.virtualWrite(V1, bojlerC);//Serial.print("Bojler  ");Serial.print(bojlerC);Serial.println();
+float akuvrchC = akuvrch.readTempC(); Blynk.virtualWrite(V2, akuvrchC);//Serial.print("AkuVrch  ");Serial.print(akuvrchC);Serial.println();
+//float akustredC = akustred.readTempC(); Blynk.virtualWrite(V3, akustredC);
+//float akudoleC = akudole.readTempC();  Blynk.virtualWrite(V4, akudoleC);
+float topeniC = topeni.readTempC(); Blynk.virtualWrite(V5, topeniC);//Serial.print("Topení  ");Serial.print(topeniC);Serial.println();
+float severC = sever.readTempC(); Blynk.virtualWrite(V6, severC);  //float jihC = jih.readTempC(); Blynk.virtualWrite(V7, jihC);
+// DHT 22  
+//Kotelna
+float kotelnaH = dht_1.readHumidity();
+float kotelnaC = dht_1.readTempC();
+//Serial.print("kotelna % / t ");
+//Serial.print(kotelnaH);
+//Serial.print(kotelnaC);
+//Serial.println();Serial.println();
+ Blynk.virtualWrite(V13, kotelnaH);
+ Blynk.virtualWrite(V14, kotelnaC);/*
+//Garáž
+float garazH = dht_2.readHumidity();
+float garazC = dht_2.readTempC();
+Serial.print("garaz % / t ");
+Serial.print(garazH);
+Serial.print(garazC);
+Serial.println();Serial.println();
+ Blynk.virtualWrite(V15, garazH);
+ Blynk.virtualWrite(V16, garazC);*/
+//sklad
+float skladH = dht_3.readHumidity(); 
+float skladC = dht_3.readTempC();Blynk.virtualWrite(V18, skladC);
+/*Serial.print("sklad % / t "); Serial.print(skladH);Serial.print(skladC); Blynk.virtualWrite(V17, skladH);
+Serial.println();
+//Kuchyně
+float kuchynH = dht_4.readHumidity();Serial.print("kuchyn % / t ");
+Serial.print(kuchynH);Serial.print(kuchynC); 
+Blynk.virtualWrite(V19, kuchynH);
+float kuchynC = dht_4.readTempC(); Blynk.virtualWrite(V20, kuchynC);
+Serial.println();*/
+//Obývák
+float obyvakH = dht_5.readHumidity();
+float obyvakC = dht_5.readTempC();  
+Blynk.virtualWrite(V22, obyvakC);
+//Serial.print("obyvak % / t ");Serial.print(obyvakH);Serial.print(obyvakC); 
+Blynk.virtualWrite(V21, obyvakH);
+/*Serial.println();
+//Ložnice
+float lozniceH = dht_6.readHumidity();
+Serial.print("loznice % / t ");Serial.print(lozniceH);Serial.print(lozniceC); 
+Blynk.virtualWrite(V23, lozniceH);
+float lozniceC = dht_6.readTempC();  Blynk.virtualWrite(V24, lozniceC);
+Serial.println();
+//R3
+float dht_7Hum = dht_7.readHumidity();  Blynk.virtualWrite(V25, h);
+float dht_7Temp = dht_7.readTempC();   Blynk.virtualWrite(V26, t);
+// R4
+float dht_8Hum = dht_8.readHumidity(); Blynk.virtualWrite(V27, h);
+float dht_8Temp = dht_8.readTempC(); Blynk.virtualWrite(V28, t);
+*/
+// PRUMERY 
+float prumerC = (topeniC + obyvakC)/2;  
+Blynk.virtualWrite(V127, prumerC);
+//float prumerH = (obyvakH + lozniceH + kuchynH + pokoj1 + pokoj2 )/5; 
+//float prumersklepH = (skladH + garazH +kotelnaH )/3;
+//float prumersklepC = (skladC + garazC +kotelnaC )/3;
+//////////////////////////////////////////////////////
+// 41 ovladani rele kotel 
+if (35 < kotelC==true && 45 < kotelC==true){digitalWrite(CerpKotel,LOW); }
+if(kotelC< 55 ==true){ digitalWrite(CerpKotel,HIGH);}
+// novy Bojler Elektro Ohřev
+float El_offset = 5; if // pokud je bojler víc než 40st.
+ (bojlerC > 40) { if((bojlerC - 45) > El_offset) // pokud je bojler mínus 45 st. víc než ofset 
+{{if (digitalRead(63),HIGH ) // pokud je cerp Bojleru vyp 
+{digitalWrite(ElOhrev, LOW); //zapni
+}}}}  else { // když bojlecC je větší než 40 st.
+ if(bojlerC < 40) { // když 45 st. mínus bojlerC je menší než nastavený offset
+if((45 - bojlerC) > El_offset) {
+ if (digitalRead(63),LOW ) // pokud je cerp Bojleru vyp 
+ {{  digitalWrite(ElOhrev, HIGH); // vypni
+ }}}}}
+// novy Akuvrch
+float Aku_offset = 10; if(akuvrchC > 50) //když je akuvrch víc než 50 st. 
+ {if((akuvrchC - 60) > Aku_offset) //když je akuvrch minus 60 větší než > offset 
+ { digitalWrite(CerpBojler, LOW); // zapni 
+  } } else  {  if(akuvrchC < 50) // když je akuvrch < menší než 50 st. 
+  { if((60 - akuvrchC) > Aku_offset) // když 60 st. mínus akuvrch > je větší než offset (( 60 - 71) > 10)  rovná se 11 tak vypni 
+  { digitalWrite(CerpBojler, HIGH); // vypni
+}}}
+// novy Topení
+float temp_offset = 0.5; 
+if(topeniC > NastavTopeni) { if((topeniC - NastavTopeni) > temp_offset) { digitalWrite(CerpTopeni, HIGH); }  }
+else { if(topeniC < NastavTopeni) { if((NastavTopeni - topeniC) > temp_offset) { digitalWrite(CerpTopeni, LOW);}}}
+} 
+// konec odešli
+BLYNK_WRITE(V29){ // button
+  buttonState = param.asInt(); // set the global button state as ON or OFF//  Serial.println(String("button state = ") + buttonState); // will output 1 or 0 to serial monitor
+  Blynk.syncVirtual(V30); // Spusťte funkci V30 níže, abyste nastavili aktuální NastavTopeni z widgetu,  //také vložte tento řádek do setup () ihned po připojení k aktualizaci při spuštění
+}
+BLYNK_WRITE(V30){ // step
+  NastavTopeni = param.asFloat(); // set the global step value // Serial.println(String("NastavTopeni = ") + NastavTopeni ); // will output NastavTopeni to serial
+}  
+void setup()
+{// Debug console
+Serial.begin(9600);
+pinMode(SDCARD_CS, OUTPUT); 
+digitalWrite(SDCARD_CS, HIGH); // Deselect the SD card
+Blynk.begin(auth);/* Můžete také určit server: Blynk.begin(auth, "blynk-cloud.com", 80); Blynk.begin(auth, IPAddress (192,168,100), 8080); dht.begin();*/
+dht_1.begin();
+dht_2.begin();
+dht_3.begin();
+dht_4.begin();
+dht_5.begin();
+dht_6.begin();//dht_7.begin();dht_8.begin(); 
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
-    steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v2
+ pinMode(CerpKotel,  OUTPUT); digitalWrite(CerpKotel,  LOW);// obeh cerpadlo kotel
+ pinMode(CerpBojler, OUTPUT); digitalWrite(CerpBojler, LOW);// obeh cerpadlo bojler
+ pinMode(ElOhrev,    OUTPUT); digitalWrite(ElOhrev,    LOW);// blokovani ohrevu
+ pinMode(CerpTopeni, OUTPUT); digitalWrite(CerpTopeni, LOW);// obeh topeni 
+ pinMode(Brana,      OUTPUT); digitalWrite(Brana,     HIGH);
+ pinMode(RE_6,       OUTPUT); // svetlo venku pin 67 A13 V42
+ pinMode(RE_7,       OUTPUT); 
+ pinMode(RE_8,       OUTPUT);
+ 
+ pinMode(V30, OUTPUT); // nastaveni teploty topeni 
+ pinMode(2, OUTPUT);
+ pinMode(20, INPUT); //Koncák Brána Zavře
+ pinMode(21, INPUT); //Koncák Brána otevř
+ 
+// Nastaví funkci, která se bude volat každou sekundu
+ timer.setInterval(1000L, odesli);
+ timer.setInterval(1050L, stavKotle);
+ timer.setInterval(1100L,koncakOtevreno); // brana 9 // 70 // 30 
+ timer.setInterval(1125L, TUV);
+ timer.setInterval(1150L, stavTopeni);  
+ timer.setInterval(1200L, stavBrana);
+ timer.setInterval(1250L, CerpObehBojler);
+ timer.setInterval(1300L, svetloVenku); // svetlo venku Led 5 A13 pin 67 V42
+ timer.setInterval(1350L, stavA14); 
+ timer.setInterval(1400L, stavA15);
+ timer.setInterval(1450L, koncakZavreno); // brana 10 // 71 // 31
+}
+void stavKotle() //62
+{bool b = digitalRead(62); if (b == 0) {  led1.on(); 
+  BLYNK_LOG(" Cerpadlo Kotel Zap . "); 
+  } 
+  else {led1.off(); 
+  BLYNK_LOG(" Cerpadlo Kotel Vyp . ");
+  }}
+/* vzor pro stavy led 
+void xx() //xx
+{ bool c = digitalRead(xx); if (c == 0) 
+{ledxx.off(); BLYNK_LOG("xx"); }
+ else 
+{ledxx.on();  BLYNK_LOG("xx"); }
+ }*/ 
+void CerpObehBojler() //63 (67) bojler cerpadlo LED 2
+{ bool x = digitalRead(63); if (x == 0) {led2.on(); 
+BLYNK_LOG("z AKU -> bojler Zap "); 
+}
+else { led2.off(); 
+BLYNK_LOG("z AKU -> bojler Vyp "); 
+} }
+void TUV() //64 Led 8
+{bool c = digitalRead(64); if (c == 0)  { led8.off(); 
+  BLYNK_LOG("TUV nahrato z Elektriky"); }
+  else 
+  {led8.on();  BLYNK_LOG("TUV nahriva z Elektriky "); }
+  }
+void stavTopeni() //65 LED 3
+{ bool x = digitalRead(65); if (x == 0) { led3.on(); 
+BLYNK_LOG("Topí"); } 
+ else 
+ {  led3.off();  BLYNK_LOG("Netopí");}
+ } 
+void stavBrana() //66 //A12 LED4
+{ bool x = digitalRead(66); if (x == 0) {led4.on(); 
+BLYNK_LOG("Brána: Otevírá");
+} 
+ else { led4.off(); 
+ BLYNK_LOG("Brána: Zavírá");
+ }}
+void svetloVenku() //67 //A13 LED5
+{ bool x = digitalRead(67); if (x == 0) {led5.off(); 
+BLYNK_LOG("Světlo Vypnuto");
+} 
+ else { led5.on(); 
+ BLYNK_LOG("Světlo Zapnuto ");
+ }}
+void stavA14() //68 LED6
+{ bool x = digitalRead(68); if (x == 0) { led6.off(); 
+BLYNK_LOG("A14: nic  oFF"); 
+} 
+else { led6.on(); 
+BLYNK_LOG("A14: nic on");
+} }
+void stavA15() //69 LED 7
+{ bool x = digitalRead(69); if (x == 0) { led7.off(); 
+BLYNK_LOG("A15: obeh cerp. do bazenu ? off");
+} 
+else { led7.on(); 
+BLYNK_LOG("A15: obeh cerp. do bazenu ? on");
+} }
+void koncakOtevreno() // 70 //  LED 9
+{ bool c = digitalRead(20); if (c == 0) {led9.on();
+BLYNK_LOG("Brána  Otevírá !"); }
+ else 
+{led9.off();  BLYNK_LOG("Brána je Zavřená !"); }
+ }
+void koncakZavreno() //71 // LED 10
+{ bool c = digitalRead(21); if (c == 0) {led10.on();
+BLYNK_LOG("Brána Zavírá !"); }
+ else 
+{led10.off();  BLYNK_LOG("Brána je Otevřená !"); }
+ }
 
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Hello, world!
-
-      # Runs a set of commands using the runners shell
-      - name: Run a multi-line script
-        run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
+void loop()
+{ Blynk.run(); 
+timer.run();
+}
